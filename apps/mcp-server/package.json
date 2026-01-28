@@ -1,0 +1,43 @@
+{
+	"name": "btca-mcp-server",
+	"version": "1.0.0",
+	"description": "MCP server wrapper for btca - enables integration with LibreChat and other MCP clients",
+	"author": "Ben Davis",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/bmdavis419/better-context",
+		"directory": "apps/mcp-server"
+	},
+	"keywords": [
+		"btca",
+		"mcp",
+		"model-context-protocol",
+		"librechat",
+		"ai",
+		"documentation"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"type": "module",
+	"main": "src/index.ts",
+	"bin": {
+		"btca-mcp": "src/index.ts"
+	},
+	"scripts": {
+		"start": "bun run src/index.ts",
+		"dev": "bun --watch src/index.ts",
+		"check": "tsgo --noEmit"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.0.0"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"@typescript/native-preview": "^7.0.0-dev.20260109.1"
+	}
+}

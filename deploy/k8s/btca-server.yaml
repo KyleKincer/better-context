@@ -1,0 +1,239 @@
+# btca-server Kubernetes Deployment
+#
+# This manifest deploys the btca-server for use with LibreChat MCP integration.
+# Customize the ConfigMap resources and Secrets before deploying.
+#
+# Prerequisites:
+# 1. Build and push the Docker image:
+#    docker build -t your-registry/btca-server:latest -f apps/server/Dockerfile .
+#    docker push your-registry/btca-server:latest
+#
+# 2. Create the secrets:
+#    kubectl create secret generic btca-secrets \
+#      --from-literal=openai-api-key=sk-xxx
+#    kubectl create secret generic git-credentials \
+#      --from-file=.git-credentials=/path/to/.git-credentials
+#
+# 3. Deploy:
+#    kubectl apply -f deploy/k8s/btca-server.yaml
+#
+# Usage:
+#    kubectl port-forward svc/btca-server 8080:80
+#    curl http://localhost:8080/
+
+---
+# ConfigMap: btca configuration file
+# Customize the resources array with your GitLab repositories
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: btca-config
+  labels:
+    app: btca-server
+data:
+  btca.config.jsonc: |
+    {
+      "$schema": "https://btca.dev/btca.schema.json",
+      // LLM provider configuration
+      // Supported: openai, anthropic, azure, google, bedrock, groq, mistral, etc.
+      "provider": "openai",
+      "model": "gpt-4o",
+      // Optional: timeout for LLM requests (default: 300000ms = 5 minutes)
+      "providerTimeoutMs": 300000,
+      // Resources: your internal GitLab repositories
+      "resources": [
+        {
+          "type": "git",
+          "name": "internal-api",
+          "url": "https://gitlab.yourcompany.com/team/api-service",
+          "branch": "main",
+          "searchPath": "docs",
+          "specialNotes": "Internal API documentation and code"
+        },
+        {
+          "type": "git",
+          "name": "shared-libs",
+          "url": "https://gitlab.yourcompany.com/team/shared-libraries",
+          "branch": "main",
+          "specialNotes": "Shared utility libraries and common code"
+        }
+      ]
+    }
+
+---
+# Secret: Git credentials for GitLab PAT
+# Create this manually or via external secrets:
+#   kubectl create secret generic git-credentials \
+#     --from-literal=.git-credentials='https://oauth2:glpat-xxxxxxxxxxxx@gitlab.yourcompany.com'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: git-credentials
+  labels:
+    app: btca-server
+type: Opaque
+stringData:
+  # Format: https://oauth2:<GITLAB_PAT>@gitlab.yourcompany.com
+  # Use a PAT with minimal scope: read_repository only
+  .git-credentials: |
+    https://oauth2:glpat-xxxxxxxxxxxx@gitlab.yourcompany.com
+
+---
+# Secret: LLM provider API keys
+# Create this manually or via external secrets:
+#   kubectl create secret generic btca-secrets \
+#     --from-literal=openai-api-key=sk-xxx
+apiVersion: v1
+kind: Secret
+metadata:
+  name: btca-secrets
+  labels:
+    app: btca-server
+type: Opaque
+stringData:
+  # Add your LLM provider API key(s)
+  # For OpenAI:
+  openai-api-key: "sk-xxxxxxxxxxxx"
+  # For Anthropic (uncomment if using):
+  # anthropic-api-key: "sk-ant-xxxxxxxxxxxx"
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: btca-server
+  labels:
+    app: btca-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: btca-server
+  template:
+    metadata:
+      labels:
+        app: btca-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: btca-server
+          image: your-registry/btca-server:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # GitLab hosts to allow (bypasses private IP check)
+            - name: BTCA_ALLOWED_GIT_HOSTS
+              value: "gitlab.yourcompany.com"
+            # LLM Provider API Key (use one of these based on your provider)
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: btca-secrets
+                  key: openai-api-key
+            # Uncomment for Anthropic:
+            # - name: ANTHROPIC_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: btca-secrets
+            #       key: anthropic-api-key
+          volumeMounts:
+            # btca configuration file
+            - name: config
+              mountPath: /home/btca/.config/btca
+              readOnly: true
+            # Git credentials for cloning private repos
+            - name: git-credentials
+              mountPath: /home/btca/.git-credentials
+              subPath: .git-credentials
+              readOnly: true
+            # Ephemeral storage for cloned repositories and collections
+            - name: data
+              mountPath: /home/btca/.local/share/btca
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: config
+          configMap:
+            name: btca-config
+        - name: git-credentials
+          secret:
+            secretName: git-credentials
+            defaultMode: 0400
+        - name: data
+          emptyDir:
+            sizeLimit: 5Gi
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: btca-server
+  labels:
+    app: btca-server
+spec:
+  type: ClusterIP
+  selector:
+    app: btca-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+
+---
+# Optional: NetworkPolicy to restrict traffic
+# Uncomment and customize to only allow traffic from LibreChat
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: btca-server-network-policy
+# spec:
+#   podSelector:
+#     matchLabels:
+#       app: btca-server
+#   policyTypes:
+#     - Ingress
+#   ingress:
+#     - from:
+#         - podSelector:
+#             matchLabels:
+#               app: librechat
+#       ports:
+#         - protocol: TCP
+#           port: 8080

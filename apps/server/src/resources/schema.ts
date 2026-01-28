@@ -3,6 +3,35 @@ import { z } from 'zod';
 import { LIMITS } from '../validation/index.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Allowed Git Hosts Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Environment-based allowlist for Git hosts.
+ * Set BTCA_ALLOWED_GIT_HOSTS to a comma-separated list of hostnames to bypass
+ * the private IP check. This is useful for self-hosted GitLab instances that
+ * may resolve to private IPs from within a Kubernetes cluster.
+ *
+ * Example: BTCA_ALLOWED_GIT_HOSTS=gitlab.yourcompany.com,git.internal.corp
+ */
+const ALLOWED_GIT_HOSTS = (process.env.BTCA_ALLOWED_GIT_HOSTS || '')
+	.split(',')
+	.map((h) => h.trim().toLowerCase())
+	.filter(Boolean);
+
+/**
+ * Check if a hostname is in the allowed list.
+ * Supports exact matches and subdomain matching (e.g., "gitlab.com" allows "foo.gitlab.com").
+ */
+const isAllowedHost = (hostname: string): boolean => {
+	const normalizedHostname = hostname.toLowerCase();
+	return ALLOWED_GIT_HOSTS.some(
+		(allowed) =>
+			normalizedHostname === allowed || normalizedHostname.endsWith('.' + allowed)
+	);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Validation Patterns
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -77,6 +106,13 @@ const GitUrlSchema = z
 			try {
 				const parsed = new URL(url);
 				const hostname = parsed.hostname.toLowerCase();
+
+				// Allow explicitly configured hosts (bypass private IP check)
+				if (isAllowedHost(hostname)) {
+					return true;
+				}
+
+				// Block localhost and private IP ranges
 				return !(
 					hostname === 'localhost' ||
 					hostname.startsWith('127.') ||
