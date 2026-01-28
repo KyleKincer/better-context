@@ -128,36 +128,97 @@ Update the AI provider and model configuration.
 
 ## Configuration
 
-The server reads configuration from `~/.btca/config.toml` or your local project's `.btca/config.toml`. You'll need to configure:
+The server reads configuration from `~/.config/btca/btca.config.jsonc` (global) or `./btca.config.jsonc` (project-level). Project config overrides global config.
 
-- **AI Provider**: OpenCode AI provider (e.g., "anthropic")
-- **Model**: AI model to use (e.g., "claude-3-7-sonnet-20250219")
+- **AI Provider**: LLM provider (e.g., "openai", "anthropic", "opencode")
+- **Model**: AI model to use (e.g., "gpt-4o", "claude-sonnet-4-20250514")
 - **Resources**: Local directories or git repositories to query
 
-Example config.toml:
+Example `btca.config.jsonc`:
 
-```toml
-provider = "anthropic"
-model = "claude-3-7-sonnet-20250219"
-resourcesDirectory = "~/.btca/resources"
-collectionsDirectory = "~/.btca/collections"
-
-[[resources]]
-type = "local"
-name = "my-project"
-path = "/path/to/my/project"
-
-[[resources]]
-type = "git"
-name = "some-repo"
-url = "https://github.com/user/repo"
-branch = "main"
+```jsonc
+{
+  "$schema": "https://btca.dev/btca.schema.json",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "resources": [
+    {
+      "type": "git",
+      "name": "my-docs",
+      "url": "https://github.com/user/repo",
+      "branch": "main",
+      "searchPath": "docs"
+    },
+    {
+      "type": "local",
+      "name": "my-project",
+      "path": "/path/to/my/project"
+    }
+  ]
+}
 ```
 
 ## Environment Variables
 
-- `PORT`: Server port (default: 8080)
-- `OPENCODE_API_KEY`: OpenCode AI API key (required)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PORT` | No | Server port (default: 8080) |
+| `OPENAI_API_KEY` | Yes* | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Yes* | Anthropic API key |
+| `BTCA_ALLOWED_GIT_HOSTS` | No | Comma-separated hostnames to allow (bypasses private IP check) |
+
+*At least one LLM provider API key is required.
+
+## Resource Sync Behavior
+
+Git repositories are kept up-to-date automatically:
+
+- **First query**: Repository is cloned (slower)
+- **Subsequent queries**: Repository is fetched and reset to latest (faster, but hits remote on each query)
+
+Repos are stored in `~/.local/share/btca/resources/` by default.
+
+## Self-Hosted / Kubernetes Deployment
+
+For deploying btca-server to Kubernetes (e.g., for integration with LibreChat):
+
+### Docker
+
+```bash
+docker build -t btca-server -f apps/server/Dockerfile .
+docker run -p 8080:8080 \
+  -e BTCA_ALLOWED_GIT_HOSTS=gitlab.yourcompany.com \
+  -e OPENAI_API_KEY=sk-xxx \
+  -v /path/to/btca.config.jsonc:/home/btca/.config/btca/btca.config.jsonc:ro \
+  -v /path/to/.git-credentials:/home/btca/.git-credentials:ro \
+  btca-server
+```
+
+### Kubernetes
+
+See `deploy/k8s/btca-server.yaml` for complete manifests including:
+- ConfigMap for `btca.config.jsonc`
+- Secrets for git credentials and API keys
+- Deployment with health checks and resource limits
+- Service (ClusterIP)
+
+### GitLab Enterprise / Self-Hosted Git
+
+To allow cloning from self-hosted GitLab instances that may resolve to private IPs from within the cluster:
+
+```bash
+BTCA_ALLOWED_GIT_HOSTS=gitlab.yourcompany.com,git.internal.corp
+```
+
+### Adding Resources (Kubernetes)
+
+With ConfigMap-based configuration, to add a new repository:
+
+1. Update the `resources` array in your Helm values or ConfigMap
+2. Merge the change via your normal CI/CD process
+3. The deployment redeploys with the new config
+
+The first query to a new resource will clone it; subsequent queries fetch the latest.
 
 ## TypeScript Types
 
